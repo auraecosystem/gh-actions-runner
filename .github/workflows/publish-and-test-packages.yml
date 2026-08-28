@@ -30,7 +30,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-          cache: pnpm
+
+      - name: Activate pnpm
+        run: corepack prepare pnpm@10.15.0 --activate
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -41,11 +43,14 @@ jobs:
       - name: Run unit smoke tests
         run: pnpm test
 
+      - name: Validate Action metadata
+        run: pnpm validate:action
+
       - name: Build action
         run: pnpm build
 
       - name: Verify build output
-        run: test -s dist/index.js
+        run: pnpm verify:dist
 
       - name: Publish packages
         id: publish
@@ -72,6 +77,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
+
+      - name: Activate pnpm
+        run: corepack prepare pnpm@10.15.0 --activate
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -105,67 +113,17 @@ jobs:
           script: |
             const fs = require('fs');
             const output = JSON.parse(fs.readFileSync('output.json', 'utf8'));
-
-            const packages = (output.packages ?? [])
-              .map((p) => `- ${p.name}: ${p.url}`)
-              .join('\n') || '- No packages reported.';
-            const templates = (output.templates ?? [])
-              .map((t) => `- [${t.name}](${t.url})`)
-              .join('\n') || '- No templates reported.';
-
-            const sha = context.eventName === 'pull_request'
-              ? context.payload.pull_request.head.sha
-              : context.payload.after;
+            const packages = (output.packages ?? []).map((p) => `- ${p.name}: ${p.url}`).join('\n') || '- No packages reported.';
+            const templates = (output.templates ?? []).map((t) => `- [${t.name}](${t.url})`).join('\n') || '- No templates reported.';
+            const sha = context.eventName === 'pull_request' ? context.payload.pull_request.head.sha : context.payload.after;
             const commitUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha}`;
-            const e2e = process.env.E2E_RESULT;
-
-            const body = `## Custom Publish Message
-
-            ### Published Packages
-
-            ${packages}
-
-            ### Templates
-
-            ${templates}
-
-            ### E2E
-
-            **${e2e}**
-
-            [View Commit](${commitUrl})`;
-
-            const identifier = '## Custom Publish Message';
+            const body = `## Custom Publish Message\n\n### Published Packages\n\n${packages}\n\n### Templates\n\n${templates}\n\n### E2E\n\n**${process.env.E2E_RESULT}**\n\n[View Commit](${commitUrl})`;
             const issueNumber = context.issue.number;
-
-            if (!issueNumber) {
-              core.info('No issue/PR number available; publish information is available in the workflow artifacts.');
-              return;
-            }
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-              },
-            );
-
-            const existing = comments.find((comment) => comment.body?.includes(identifier));
-
+            if (!issueNumber) { core.info('No issue/PR number available.'); return; }
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber });
+            const existing = comments.find((comment) => comment.body?.includes('## Custom Publish Message'));
             if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
             } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body,
-              });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, body });
             }
