@@ -1,0 +1,28 @@
+name: Aura Ecosystem GitHub Actions Runner
+description: Deploy an existing GitHub Actions artifact to GitHub Pages with OIDC.
+author: Aura Ecosystem
+inputs:
+  timeout:
+    description: Maximum deployment wait time in milliseconds.
+    required: false
+    default: '600000'
+  reporting_interval:
+    description: Deployment status polling interval in milliseconds.
+    required: false
+    default: '5000'
+  error_count:
+    description: Maximum number of transient API errors before cancellation.
+    required: false
+    default: '10'
+  artifact_name:
+    description: Name of the uploaded artifact to deploy.
+    required: false
+    default: 'github-pages'
+outputs:
+  page_url:
+    description: URL of the deployed GitHub Pages site.
+  status:
+    description: Final deployment status.
+runs:
+  using: node24
+  main: dist/index.js
