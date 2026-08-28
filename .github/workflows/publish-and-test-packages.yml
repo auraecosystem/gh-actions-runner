@@ -1,0 +1,158 @@
+name: Publish and Test Packages
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
+      urls: ${{ steps.publish.outputs.urls }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish packages
+        id: publish
+        run: pnpm exec pkg-pr-new publish --json output.json --comment=off
+
+      - name: Upload publish metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-publish-metadata
+          path: output.json
+          if-no-files-found: error
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install published packages
+        if: needs.publish.outputs.urls != ''
+        run: pnpm add ${{ needs.publish.outputs.urls }}
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+
+  report:
+    runs-on: ubuntu-latest
+    needs: [publish, e2e-test]
+    if: always() && needs.publish.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download publish metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: package-publish-metadata
+
+      - name: Post or update comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          E2E_RESULT: ${{ needs.e2e-test.result }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const output = JSON.parse(fs.readFileSync('output.json', 'utf8'));
+
+            const packages = (output.packages ?? [])
+              .map((p) => `- ${p.name}: ${p.url}`)
+              .join('\n') || '- No packages reported.';
+            const templates = (output.templates ?? [])
+              .map((t) => `- [${t.name}](${t.url})`)
+              .join('\n') || '- No templates reported.';
+
+            const sha = context.eventName === 'pull_request'
+              ? context.payload.pull_request.head.sha
+              : context.payload.after;
+            const commitUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sha}`;
+            const e2e = process.env.E2E_RESULT;
+
+            const body = `## Custom Publish Message
+
+            ### Published Packages
+
+            ${packages}
+
+            ### Templates
+
+            ${templates}
+
+            ### E2E
+
+            **${e2e}**
+
+            [View Commit](${commitUrl})`;
+
+            const identifier = '## Custom Publish Message';
+            const issueNumber = context.issue.number;
+
+            if (!issueNumber) {
+              core.info('No issue/PR number available; publish information is available in the workflow artifacts.');
+              return;
+            }
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              },
+            );
+
+            const existing = comments.find((comment) => comment.body?.includes(identifier));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
