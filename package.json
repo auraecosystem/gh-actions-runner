@@ -25,9 +25,13 @@
     "lint": "node scripts/lint.cjs",
     "test": "node scripts/test.cjs",
     "test:e2e": "node scripts/e2e-test.cjs",
-    "package": "pnpm build && pnpm pack",
-    "prepublishOnly": "pnpm test && pnpm build",
-    "check": "pnpm lint && pnpm test && pnpm build"
+    "test:smoke": "node scripts/smoke-test.cjs",
+    "validate:action": "node scripts/validate-action.cjs",
+    "verify:dist": "node scripts/verify-dist.cjs",
+    "doctor": "node scripts/doctor.cjs",
+    "package": "pnpm build && pnpm verify:dist && pnpm pack",
+    "prepublishOnly": "pnpm test && pnpm validate:action && pnpm build && pnpm verify:dist",
+    "check": "pnpm doctor && pnpm lint && pnpm test && pnpm test:smoke && pnpm validate:action && pnpm build && pnpm verify:dist"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
