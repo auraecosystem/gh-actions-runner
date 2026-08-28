@@ -1,0 +1,47 @@
+{
+  "name": "@auraecosystem/gh-actions-runner",
+  "version": "0.1.0",
+  "description": "Aura Ecosystem GitHub Action runner for GitHub Pages deployments.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/auraecosystem/gh-actions-runner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/auraecosystem/gh-actions-runner/issues"
+  },
+  "homepage": "https://github.com/auraecosystem/gh-actions-runner",
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "internal",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm clean && ncc build src/main.tsx -o dist --minify",
+    "clean": "node scripts/clean.cjs",
+    "lint": "node scripts/lint.cjs",
+    "test": "node scripts/test.cjs",
+    "test:e2e": "node scripts/e2e-test.cjs",
+    "package": "pnpm build && pnpm pack",
+    "prepublishOnly": "pnpm test && pnpm build",
+    "check": "pnpm lint && pnpm test && pnpm build"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@actions/artifact": "^2.3.2",
+    "@actions/core": "^2.0.1",
+    "@actions/github": "^8.0.0",
+    "@octokit/request-error": "^7.0.0",
+    "http-status-messages": "^2.0.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.45.0",
+    "pkg-pr-new": "^0.0.70"
+  }
+}
