@@ -1,0 +1,159 @@
+name: Add PR to Aura Project
+
+on:
+  pull_request:
+    types: [ready_for_review]
+  workflow_dispatch:
+    inputs:
+      project_number:
+        description: 'GitHub Projects v2 number (defaults to AURA_PROJECT_NUMBER repository variable)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  projects: write
+
+concurrency:
+  group: project-tracking-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  ORGANIZATION: ${{ vars.AURA_PROJECT_ORG || github.repository_owner }}
+  PROJECT_NUMBER: ${{ inputs.project_number || vars.AURA_PROJECT_NUMBER }}
+
+jobs:
+  track_pr:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate project configuration
+        env:
+          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROJECT_NUMBER}" ]; then
+            echo '::error::Missing AURA_PROJECT_NUMBER repository variable (or workflow_dispatch project_number input).'
+            exit 1
+          fi
+          if ! [[ "${PROJECT_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo '::error::PROJECT_NUMBER must be an integer.'
+            exit 1
+          fi
+          gh auth status
+
+      - name: Get project data
+        env:
+          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  title
+                  fields(first: 100) {
+                    nodes {
+                      ... on ProjectV2Field { id name }
+                      ... on ProjectV2SingleSelectField {
+                        id name
+                        options { id name }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f org="${ORGANIZATION}" -F number="${PROJECT_NUMBER}" > project_data.json
+
+          PROJECT_ID=$(jq -r '.data.organization.projectV2.id // empty' project_data.json)
+          if [ -z "${PROJECT_ID}" ]; then
+            echo '::error::Project was not found or the token cannot access it.'
+            cat project_data.json
+            exit 1
+          fi
+
+          echo "PROJECT_ID=${PROJECT_ID}" >> "$GITHUB_ENV"
+          echo "PROJECT_TITLE=$(jq -r '.data.organization.projectV2.title' project_data.json)" >> "$GITHUB_ENV"
+
+          STATUS_FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Status") | .id' project_data.json | head -n1)
+          TODO_OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == "Todo") | .id' project_data.json | head -n1)
+          DATE_FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Date posted") | .id' project_data.json | head -n1)
+
+          for pair in "STATUS_FIELD_ID=${STATUS_FIELD_ID}" "TODO_OPTION_ID=${TODO_OPTION_ID}" "DATE_FIELD_ID=${DATE_FIELD_ID}"; do
+            key="${pair%%=*}"; value="${pair#*=}"
+            if [ -z "${value}" ] || [ "${value}" = "null" ]; then
+              echo "::error::Required Project field/option missing: ${key}"
+              exit 1
+            fi
+            echo "${key}=${value}" >> "$GITHUB_ENV"
+          done
+
+      - name: Add PR to project
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
+          PR_ID: ${{ github.event.pull_request.node_id }}
+        run: |
+          set -euo pipefail
+          ITEM_ID=$(gh api graphql -f query='
+            mutation($project:ID!, $pr:ID!) {
+              addProjectV2ItemById(input:{projectId:$project, contentId:$pr}) {
+                item { id }
+              }
+            }' -f project="${PROJECT_ID}" -f pr="${PR_ID}" --jq '.data.addProjectV2ItemById.item.id')
+          if [ -z "${ITEM_ID}" ] || [ "${ITEM_ID}" = "null" ]; then
+            echo '::error::Failed to add PR to project.'
+            exit 1
+          fi
+          echo "ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
+
+      - name: Find PR for manual verification
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          echo 'Manual dispatch validates project configuration; no PR is attached.'
+
+      - name: Set project fields
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
+          DATE_VALUE: ${{ format('{0}-{1}-{2}', github.event.pull_request.updated_at[0:4], github.event.pull_request.updated_at[5:7], github.event.pull_request.updated_at[8:10]) }}
+        run: |
+          set -euo pipefail
+          DATE_VALUE=$(date -u +%Y-%m-%d)
+          gh api graphql -f query='
+            mutation($project: ID!, $item: ID!, $statusField: ID!, $statusValue: String!, $dateField: ID!, $dateValue: Date!) {
+              set_status: updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $statusField
+                value: { singleSelectOptionId: $statusValue }
+              }) { projectV2Item { id } }
+              set_date_posted: updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $dateField
+                value: { date: $dateValue }
+              }) { projectV2Item { id } }
+            }' \
+            -f project="${PROJECT_ID}" \
+            -f item="${ITEM_ID}" \
+            -f statusField="${STATUS_FIELD_ID}" \
+            -f statusValue="${TODO_OPTION_ID}" \
+            -f dateField="${DATE_FIELD_ID}" \
+            -f dateValue="${DATE_VALUE}" \
+            --silent
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Aura Project Tracking'
+            echo "- Organization: ${ORGANIZATION}"
+            echo "- Project: ${PROJECT_TITLE:-validated}"
+            echo "- Event: ${GITHUB_EVENT_NAME}"
+          } >> "$GITHUB_STEP_SUMMARY"
