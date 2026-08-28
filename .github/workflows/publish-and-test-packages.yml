@@ -9,6 +9,10 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: publish-and-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -29,10 +33,19 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
-      - name: Build
+      - name: Validate repository
+        run: pnpm lint
+
+      - name: Run unit smoke tests
+        run: pnpm test
+
+      - name: Build action
         run: pnpm build
+
+      - name: Verify build output
+        run: test -s dist/index.js
 
       - name: Publish packages
         id: publish
@@ -61,9 +74,9 @@ jobs:
           node-version: 24
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
-      - name: Install published packages
+      - name: Install published package
         if: needs.publish.outputs.urls != ''
         run: pnpm add ${{ needs.publish.outputs.urls }}
 
