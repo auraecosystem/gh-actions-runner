@@ -1,0 +1,10 @@
+name: 'Web4App Action'
+description: 'A GitHub Action to build, test, and deploy TypeScript projects with multi-env support.'
+inputs:
+  name:
+    description: 'welcome to web4 era'
+    required: false
+    default: 'Hello World'
+runs:
+  using: 'node22'
+  main: 'dist/index.js'
