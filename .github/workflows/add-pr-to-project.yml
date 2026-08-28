@@ -109,19 +109,10 @@ jobs:
           fi
           echo "ITEM_ID=${ITEM_ID}" >> "$GITHUB_ENV"
 
-      - name: Find PR for manual verification
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          echo 'Manual dispatch validates project configuration; no PR is attached.'
-
       - name: Set project fields
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.AURA_PROJECTS_TOKEN || github.token }}
-          DATE_VALUE: ${{ format('{0}-{1}-{2}', github.event.pull_request.updated_at[0:4], github.event.pull_request.updated_at[5:7], github.event.pull_request.updated_at[8:10]) }}
         run: |
           set -euo pipefail
           DATE_VALUE=$(date -u +%Y-%m-%d)
